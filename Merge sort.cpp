@@ -1,79 +1,91 @@
-#include <iostream>
+#include <algorithm>
 #include <vector>
-
-void merge(std::vector<int>& arr, int left, int middle, int right) {
-    int n1 = middle - left + 1;
-    int n2 = right - middle;
-
-    // Crear arreglos temporales
-    std::vector<int> leftArray(n1);
-    std::vector<int> rightArray(n2);
-
-    // Copiar datos a los arreglos temporales leftArray[] y rightArray[]
-    for (int i = 0; i < n1; i++)
-        leftArray[i] = arr[left + i];
-    for (int j = 0; j < n2; j++)
-        rightArray[j] = arr[middle + 1 + j];
-
-    // Mezclar los arreglos temporales de nuevo en arr[left..right]
-    int i = 0; // Índice inicial del primer subarreglo
-    int j = 0; // Índice inicial del segundo subarreglo
-    int k = left; // Índice inicial del arreglo mezclado
-
-    while (i < n1 && j < n2) {
-        if (leftArray[i] <= rightArray[j]) {
-            arr[k] = leftArray[i];
-            i++;
-        } else {
-            arr[k] = rightArray[j];
-            j++;
+#include "mpi.h" 
+#include <iostream>
+using namespace std;
+ 
+int main(int argc, char *argv[]) 
+{ 
+    int rank, size, tama;
+    vector<int> Global;//Vector a ordenar
+    vector<int> *Local;//parte del vector
+ 
+    MPI_Init(&argc, &argv);//iniciamos el entorno MPI
+    MPI_Comm_rank(MPI_COMM_WORLD,&rank);//obtenemos el identificador del proceso
+    MPI_Comm_size(MPI_COMM_WORLD,&size);//obtenemos el numero de procesos
+ 
+    if( size % 2 != 0 ){//El numero de procesos deberia debe ser par para aplicar este
+algoritmo
+    	cout<<"El numero de procesos debe ser par"<<endl;
+    	MPI_Abort(MPI_COMM_WORLD,1);//abandonamos la ejecucion.
+    }
+ 
+    if(argc < 2){
+    	if(rank == 0)
+    		cout<< "No recibio parametro con el tamaño de vector, por defecto sera 1000"<<endl;
+    	tama = 1000;
+    }else{
+    	tama = atoi(argv[1]);
+    }
+ 
+    if(rank == 0){//el proceso 0 genera un vector desordenado.
+    	for(int i = 0; i < tama;++i){
+    		Global.push_back(rand()%1000);
+    	}
+    }
+    Local = new vector<int>(tama/size);// reservamos espacio para el vector local a cada
+proceso.
+ 
+    //Repartimos el vector entre todos los procesos.
+ 
+MPI_Scatter(&Global[0],tama/size,MPI_INT,&((*Local)[0]),tama/size,MPI_INT,0,MPI_COMM_WORLD);
+ 
+    //Cada proceso ordena su parte.
+    sort(Local->begin(),Local->end());
+ 
+    vector<int> *ordenado;
+    MPI_Status status;
+    int paso = 1;
+ 
+    //Ahora comienza el proceso de mezcla.
+    while(paso<size)
+    {
+	// Cada pareja de procesos
+        if(rank%(2*paso)==0) // El izquierdo recibe el vector y mezcla
+        {
+            if(rank+paso<size)// los procesos sin pareja esperan.
+            {
+            	vector<int> localVecino(Local->size());
+            	ordenado = new vector<int>(Local->size()*2);
+ 
+ 
+MPI_Recv(&localVecino[0],localVecino.size(),MPI_INT,rank+paso,0,MPI_COMM_WORLD,&status);
+                merge(
+Local->begin(),Local->end(),localVecino.begin(),localVecino.end(),ordenado->begin() );
+ 
+                delete Local;
+                Local = ordenado;
+                ordenado = NULL;
+            }
         }
-        k++;
+        else // El derecho envia su vector ordenado y termina
+        {
+            int vecino = rank-paso;
+            MPI_Send(&((*Local)[0]),Local->size(),MPI_INT,vecino,0,MPI_COMM_WORLD);
+            break;//Sale del bucle
+        }
+        paso = paso*2;// el paso se duplica ya que el numero de procesos se reduce a la
+mita.
     }
-
-    // Copiar los elementos restantes de leftArray[], si los hay
-    while (i < n1) {
-        arr[k] = leftArray[i];
-        i++;
-        k++;
+ 
+    if(rank == 0){
+    	cout<<endl<<"[";
+    	for(unsigned int i = 0; i<Local->size();++i){
+    		cout<< (*Local)[i]<<" , ";
+    	}
+    	cout<<"]"<<endl;
     }
-
-    // Copiar los elementos restantes de rightArray[], si los hay
-    while (j < n2) {
-        arr[k] = rightArray[j];
-        j++;
-        k++;
-    }
-}
-
-void mergeSort(std::vector<int>& arr, int left, int right) {
-    if (left < right) {
-        // Encuentra el punto medio del arreglo
-        int middle = left + (right - left) / 2;
-
-        // Ordena la primera y la segunda mitad
-        mergeSort(arr, left, middle);
-        mergeSort(arr, middle + 1, right);
-
-        // Mezcla las mitades ordenadas
-        merge(arr, left, middle, right);
-    }
-}
-
-int main() {
-    std::vector<int> arr = {12, 11, 13, 5, 6, 7};
-
-    std::cout << "Arreglo original: ";
-    for (int num : arr) {
-        std::cout << num << " ";
-    }
-
-    mergeSort(arr, 0, arr.size() - 1);
-
-    std::cout << "\nArreglo ordenado: ";
-    for (int num : arr) {
-        std::cout << num << " ";
-    }
-
-    return 0;
+ 
+    MPI_Finalize();
+    return 0; 
 }
